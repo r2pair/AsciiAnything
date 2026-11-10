@@ -8,8 +8,16 @@ Turn any image into ASCII art, in a Mac desktop app or in the terminal.
 - **Blocks**: switch between keyboard characters (` .:-=+*#%@`) and a block gradient (` ░▒▓█`)
 - **Invert**: swap light and dark
 - **Width**: choose how many characters wide the art is
+- **Copy Text**: copy the art to the clipboard as plain text
+- **Copy Image** and **Save PNG**: copy or save the art as a picture, in colour if Color is on
+
+## Download
+
+Get the ready-made Mac app from the [Releases page](https://github.com/r2pair/AsciiAnything/releases/latest). It needs a Mac with Apple Silicon (M1 or newer). The release notes explain how to open it the first time.
 
 ## Setup
+
+To run from the code instead:
 
 You need Python 3.9 or newer.
 

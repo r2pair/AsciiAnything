@@ -12,7 +12,7 @@ import sys
 
 # PySide6 is a library for building windows, buttons and other controls.
 # (It is the Python version of a toolkit called "Qt".)
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
 from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
@@ -27,13 +27,18 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-# Reuse the code we already wrote! This imports two functions from
-# ascii_art.py, so the app and the terminal program share the same logic.
-from ascii_art import image_to_art, load_image
+# Reuse the code we already wrote! This imports from ascii_art.py, so the
+# app and the terminal program share the same logic.
+from ascii_art import IMAGE_ERRORS, image_to_art, load_image
 
 # The fewest and most characters wide the art can be (the slider's range).
 MIN_WIDTH = 20
 MAX_WIDTH = 250
+
+# How many pixels wide a saved or copied PNG picture is, and the tallest
+# it is allowed to be.
+EXPORT_WIDTH = 2000
+EXPORT_MAX_HEIGHT = 6000
 
 
 # --- STEP 2: An on/off switch ----------------------------------------------
@@ -76,12 +81,15 @@ class ArtView(QWidget):
         # SPEED: measure the font once, here, instead of on every redraw.
         # We measure one character at size 100; any other size is just
         # these numbers scaled up or down.
-        self.font = QFont("Menlo")  # a font where every character is the same width
-        self.font.setStyleHint(QFont.Monospace)
-        self.font.setPointSizeF(100)
-        metrics = QFontMetricsF(self.font)
+        self.base_font = QFont("Menlo")  # a font where every character is the same width
+        self.base_font.setStyleHint(QFont.Monospace)
+        self.base_font.setPointSizeF(100)
+        metrics = QFontMetricsF(self.base_font)
         self.base_cell_width = metrics.horizontalAdvance("M")
         self.base_cell_height = metrics.height()
+        # The "ascent" is how far the tallest letters rise above the line
+        # the text sits on. We need it to position each row.
+        self.base_ascent = metrics.ascent()
 
     def show_art(self, lines, color_image):
         self.lines = lines
@@ -107,48 +115,70 @@ class ArtView(QWidget):
         # time would be wasteful, so we draw the art once into an off-screen
         # picture (the "cache") and afterwards just stamp that picture on.
         if self.cache is None:
-            self.cache = self.render()
+            # Modern Mac screens pack 2 real pixels into each "point" of
+            # size. Drawing at that ratio keeps the text sharp.
+            self.cache = self.render(self.width(), self.height(), self.devicePixelRatioF())
         painter.drawPixmap(0, 0, self.cache)
 
-    def render(self):
-        """Draw the art into an off-screen picture and return it."""
+    def export_picture(self):
+        """Return the art as a picture for saving or copying, on a black background."""
+        # The art's size if drawn with the size-100 font.
+        base_width = len(self.lines[0]) * self.base_cell_width
+        base_height = len(self.lines) * self.base_cell_height
 
-        # Modern Mac screens pack 2 real pixels into each "point" of size.
-        # Making the picture that much bigger keeps the text sharp.
-        ratio = self.devicePixelRatioF()
-        pixmap = QPixmap(self.size() * ratio)
+        # Normally the picture is EXPORT_WIDTH pixels wide, however big the
+        # window is. Very tall, thin art is limited by height instead, so the
+        # picture can never become enormous.
+        scale = min(EXPORT_WIDTH / base_width, EXPORT_MAX_HEIGHT / base_height)
+        width = max(1, round(base_width * scale))
+        height = max(1, round(base_height * scale))
+        return self.render(width, height, 1.0, background=QColor("black"))
+
+    def render(self, width, height, ratio, background=None):
+        """Draw the art into an off-screen picture and return it.
+
+        `width` and `height` are the picture's size, and `ratio` is how many
+        real pixels to use per unit of size. If `background` is given, the
+        picture is filled with that colour behind the art; otherwise the
+        gaps between characters are left see-through.
+        """
+
+        pixmap = QPixmap(QSize(width, height) * ratio)
         pixmap.setDevicePixelRatio(ratio)
         pixmap.fill(Qt.transparent)  # start completely see-through
 
         row_count = len(self.lines)
         column_count = len(self.lines[0])
 
-        # Pick the biggest font size at which the whole picture still fits.
-        scale = min(
-            self.width() / (column_count * self.base_cell_width),
-            self.height() / (row_count * self.base_cell_height),
-        )
-        font = QFont(self.font)  # a copy, so the size-100 original is untouched
-        font.setPointSizeF(max(1.0, 100 * scale))
+        # The art's size if drawn with the size-100 font.
+        art_width = column_count * self.base_cell_width
+        art_height = row_count * self.base_cell_height
 
-        # How big is one character cell at this size?
-        metrics = QFontMetricsF(font)
-        cell_width = metrics.horizontalAdvance("M")
-        cell_height = metrics.height()
+        # How much to shrink (or grow) that so the whole picture just fits.
+        scale = min(width / art_width, height / art_height)
 
-        # Centre the picture in the available space.
-        left = (self.width() - column_count * cell_width) / 2
-        top = (self.height() - row_count * cell_height) / 2
+        # Centre the art in the available space.
+        left = (width - art_width * scale) / 2
+        top = (height - art_height * scale) / 2
 
         painter = QPainter(pixmap)
-        painter.setFont(font)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        painter.setFont(self.base_font)
         painter.setPen(QColor("white"))
+
+        # Rather than choosing a font size to fit (font sizes get rounded to
+        # whole numbers, so the art could end up slightly too big and get cut
+        # off), we always draw with the size-100 font and tell the painter to
+        # scale everything it draws. translate() moves the starting corner;
+        # scale() shrinks or grows all drawing after it.
+        painter.translate(left, top)
+        painter.scale(scale, scale)
 
         # SPEED: draw each row as one whole string, in white, rather than
         # one character at a time.
         for y, line in enumerate(self.lines):  # enumerate gives (position, item)
-            baseline = top + y * cell_height + metrics.ascent()
-            painter.drawText(QPointF(left, baseline), line)
+            baseline = y * self.base_cell_height + self.base_ascent
+            painter.drawText(QPointF(0, baseline), line)
 
         if self.color_image is not None:
             # SPEED: colour every character in ONE step. "SourceIn" means
@@ -157,8 +187,15 @@ class ArtView(QWidget):
             # the text, each white character soaks up the colour of its own
             # pixel, and the see-through gaps between them stay see-through.
             painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-            art_area = QRectF(left, top, column_count * cell_width, row_count * cell_height)
-            painter.drawImage(art_area, self.color_image)
+            painter.drawImage(QRectF(0, 0, art_width, art_height), self.color_image)
+
+        painter.resetTransform()  # back to normal, unscaled drawing
+
+        if background is not None:
+            # "DestinationOver" means "paint BEHIND what is already drawn",
+            # so this fills in the see-through gaps without covering the art.
+            painter.setCompositionMode(QPainter.CompositionMode_DestinationOver)
+            painter.fillRect(QRectF(0, 0, width, height), background)
 
         painter.end()
         return pixmap
@@ -179,7 +216,8 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AsciiAnything")
-        self.image = None  # no image chosen yet
+        self.image = None       # no image chosen yet
+        self.image_name = ""    # the chosen file's name, without ".jpg" etc.
 
         # -- Create the controls --
         self.choose_button = QPushButton("Choose Image…")
@@ -196,6 +234,23 @@ class MainWindow(QWidget):
         self.width_label = QLabel()
 
         self.art_view = ArtView()
+
+        # The buttons for getting the art OUT of the app. They start
+        # switched off ("disabled") because there is nothing to export yet.
+        self.copy_text_button = QPushButton("Copy Text")
+        self.copy_image_button = QPushButton("Copy Image")
+        self.save_png_button = QPushButton("Save PNG…")
+        self.export_buttons = [self.copy_text_button, self.copy_image_button, self.save_png_button]
+        for button in self.export_buttons:
+            button.setEnabled(False)
+
+        # A line of text that confirms what just happened ("Text copied").
+        self.status_label = QLabel()
+        # A timer that wipes that message after a few seconds. "Single shot"
+        # means it fires once each time it is started, rather than repeating.
+        self.status_timer = QTimer(self)
+        self.status_timer.setSingleShot(True)
+        self.status_timer.timeout.connect(self.status_label.clear)
 
         # -- Arrange them --
         # A "layout" positions controls for us. QHBoxLayout puts things in
@@ -216,13 +271,24 @@ class MainWindow(QWidget):
         controls.addWidget(self.width_label)
         controls.addWidget(self.width_slider)
 
+        # A second row, under the art, for the status message and export buttons.
+        export_row = QHBoxLayout()
+        export_row.addWidget(self.status_label)
+        export_row.addStretch()
+        for button in self.export_buttons:
+            export_row.addWidget(button)
+
         layout = QVBoxLayout(self)
         layout.addLayout(controls)
         layout.addWidget(self.art_view, 1)  # the 1 means "take all spare space"
+        layout.addLayout(export_row)
 
         # -- Connect the controls to actions --
         # "connect" means: when this happens, call that function.
         self.choose_button.clicked.connect(self.choose_image)
+        self.copy_text_button.clicked.connect(self.copy_text)
+        self.copy_image_button.clicked.connect(self.copy_image)
+        self.save_png_button.clicked.connect(self.choose_save_location)
         self.color_switch.toggled.connect(self.refresh)
         self.blocks_switch.toggled.connect(self.refresh)
         self.invert_switch.toggled.connect(self.refresh)
@@ -249,12 +315,56 @@ class MainWindow(QWidget):
             # move after that works from this small copy instead of from
             # millions of pixels.
             self.image = load_image(path, max_width=MAX_WIDTH * 2)
-        except OSError:
-            # OSError covers "missing file", "not an image" and similar.
+        except IMAGE_ERRORS:
+            # IMAGE_ERRORS covers "missing file", "not an image" and similar.
+            # The previously chosen image (if any) stays on screen.
             QMessageBox.warning(self, "AsciiAnything", "That file couldn't be opened as an image.")
             return
-        self.file_label.setText(os.path.basename(path))  # just the file's name
+
+        name = os.path.basename(path)                   # just the file's name
+        self.image_name = os.path.splitext(name)[0]     # ...without ".jpg" etc.
+        if len(name) > 30:
+            name = name[:27] + "…"  # shorten long names so they don't crowd the controls
+        self.file_label.setText(name)
+
+        for button in self.export_buttons:
+            button.setEnabled(True)  # now there is something to export
         self.refresh()
+
+    def show_status(self, message):
+        """Show a short confirmation message that disappears after 4 seconds."""
+        self.status_label.setText(message)
+        self.status_timer.start(4000)  # in milliseconds; restarts if already running
+
+    def copy_text(self):
+        """Put the art on the clipboard as plain text, ready to paste."""
+        # Plain text can't carry colour, so the text is the same with the
+        # Color switch on or off.
+        QApplication.clipboard().setText("\n".join(self.art_view.lines))
+        self.show_status("Text copied. Paste it using a fixed-width font.")
+
+    def copy_image(self):
+        """Put a picture of the art on the clipboard."""
+        QApplication.clipboard().setPixmap(self.art_view.export_picture())
+        self.show_status("Image copied to the clipboard.")
+
+    def choose_save_location(self):
+        """Ask where to save the picture, then save it."""
+        suggested = os.path.join(os.path.expanduser("~/Desktop"), self.image_name + "-ascii.png")
+        path, _ = QFileDialog.getSaveFileName(self, "Save as PNG", suggested, "PNG image (*.png)")
+        if path:  # path is empty if the user pressed Cancel
+            self.save_png(path)
+
+    def save_png(self, path):
+        """Save a picture of the art as a PNG file at `path`."""
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        # save() returns True if it worked and False if it didn't
+        # (for example, if the folder can't be written to).
+        if self.art_view.export_picture().save(path, "PNG"):
+            self.show_status(f"Saved {os.path.basename(path)}")
+        else:
+            QMessageBox.warning(self, "AsciiAnything", "The picture couldn't be saved there.")
 
     def refresh(self):
         """Rebuild the art using the current switch and slider settings."""

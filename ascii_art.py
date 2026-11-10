@@ -38,6 +38,11 @@ CHAR_HEIGHT_RATIO = 0.5
 # RESET switches the text back to the terminal's normal colour.
 RESET = "\033[0m"
 
+# The kinds of error that opening an image can cause. OSError covers missing
+# files, files that aren't images, damaged images and "permission denied".
+# DecompressionBombError is Pillow refusing an absurdly large image.
+IMAGE_ERRORS = (OSError, Image.DecompressionBombError)
+
 
 def load_image(path, max_width=None):
     """Open the image file at `path` and return it as a colour image.
@@ -60,6 +65,14 @@ def load_image(path, max_width=None):
     # Phone photos are often stored sideways with a note saying "rotate me".
     # This applies that note so the picture is the right way up.
     image = ImageOps.exif_transpose(image)
+
+    # Some images (logos, stickers) have see-through areas. Those pixels
+    # still have a hidden colour, which can be anything, so we lay the image
+    # over a plain black background to make see-through areas properly dark.
+    if image.has_transparency_data:
+        image = image.convert("RGBA")  # the A is "alpha": how solid each pixel is
+        background = Image.new("RGBA", image.size, "black")
+        image = Image.alpha_composite(background, image)
 
     # "RGB" mode means each pixel is three numbers: how much red, green and
     # blue it contains, each from 0 to 255.
@@ -219,6 +232,10 @@ def main():
         sys.exit(f"Error: '{args.image}' is a folder, not an image.")
     except Image.UnidentifiedImageError:
         sys.exit(f"Error: '{args.image}' doesn't look like an image file.")
+    except IMAGE_ERRORS as error:
+        # Anything else that can go wrong: no permission to read the file,
+        # a damaged image, and so on. `error` holds the details.
+        sys.exit(f"Error: couldn't read '{args.image}': {error}")
 
     print(art)
 
