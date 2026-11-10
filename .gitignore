@@ -1,0 +1,15 @@
+# Files git should NOT upload.
+
+# The private Python setup: large, and anyone can recreate it
+# from requirements.txt.
+.venv/
+
+# PyInstaller's output: the built app and its working files.
+# These are rebuilt by running ./build_app.sh.
+build/
+dist/
+*.spec
+
+# Files Python and macOS create automatically.
+__pycache__/
+.DS_Store
