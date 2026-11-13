@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 
 # The app's version number, shown in Finder's "Get Info" window.
 # Change this each time you publish a new release.
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # PyInstaller bundles our code, Python itself, and the libraries we use
 # (Pillow and PySide6) into one self-contained Mac app.

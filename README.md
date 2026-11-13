@@ -8,6 +8,9 @@ Turn any image into ASCII art, in a Mac desktop app or in the terminal.
 - **Blocks**: switch between keyboard characters (` .:-=+*#%@`) and a block gradient (` ░▒▓█`)
 - **Invert**: swap light and dark
 - **Width**: choose how many characters wide the art is
+- **Animated GIFs**: a GIF plays as moving ASCII art, and the switches and width slider work while it plays. Only the first 30 seconds of a longer animation are used
+- **Playback controls**: play, pause, step one frame back or forward, and drag the bar to move through the animation
+- **Save GIF**: save the whole animation as a new ASCII art GIF, 800 pixels wide
 - **Copy Text**: copy the art to the clipboard as plain text
 - **Copy Image** and **Save PNG**: copy or save the art as a picture, in colour if Color is on
 
@@ -40,6 +43,12 @@ python ascii_art.py path/to/image.jpg --color --style blocks --width 120
 ```
 
 Run `python ascii_art.py --help` to see every option.
+
+Give it an animated GIF and it plays in the terminal until you press Ctrl+C:
+
+```
+python ascii_art.py path/to/animation.gif --color
+```
 
 ## Build the Mac app
 
