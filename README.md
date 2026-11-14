@@ -4,6 +4,7 @@ Turn any image into ASCII art, in a Mac desktop app or in the terminal.
 
 ## Features
 
+- **Drag and drop**: drag an image from Finder onto the window to open it, or use the Choose File button
 - **Color**: draw each character in the colour of the pixel it came from
 - **Blocks**: switch between keyboard characters (` .:-=+*#%@`) and a block gradient (` ░▒▓█`)
 - **Invert**: swap light and dark

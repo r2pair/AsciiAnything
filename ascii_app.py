@@ -17,7 +17,7 @@ import time
 # PySide6 is a library for building windows, buttons and other controls.
 # (It is the Python version of a toolkit called "Qt".)
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
     QApplication,
@@ -94,6 +94,7 @@ class ArtView(QWidget):
         self.lines = []          # the rows of text
         self.color_image = None  # one pixel per character, or None for white text
         self.cache = None        # a saved picture of the finished drawing
+        self.drop_hint = False   # True while a file is being dragged over the window
         self.setMinimumSize(480, 360)
 
         # SPEED: measure the font once, here, instead of on every redraw.
@@ -115,6 +116,11 @@ class ArtView(QWidget):
         self.cache = None  # the saved drawing is out of date; throw it away
         self.update()      # tells Qt "please redraw me", which calls paintEvent
 
+    def show_drop_hint(self, showing):
+        """Turn the green "you can drop that here" outline on or off."""
+        self.drop_hint = showing
+        self.update()
+
     # Qt calls resizeEvent whenever this area changes size.
     def resizeEvent(self, event):
         self.cache = None  # the art must be redrawn at the new size
@@ -125,20 +131,27 @@ class ArtView(QWidget):
 
         if not self.lines:
             painter.setPen(QColor("#8e8e93"))
-            painter.drawText(self.rect(), Qt.AlignCenter, "Choose a file to begin")
-            return
+            painter.drawText(self.rect(), Qt.AlignCenter, "Choose a file, or drop one here, to begin")
+        else:
+            # SPEED: Qt asks us to repaint often (for example when another
+            # window moves across ours). Drawing thousands of characters each
+            # time would be wasteful, so we draw the art once into an off-screen
+            # picture (the "cache") and afterwards just stamp that picture on.
+            if self.cache is None:
+                # Modern Mac screens pack 2 real pixels into each "point" of
+                # size. Drawing at that ratio keeps the text sharp.
+                self.cache = self.render(
+                    self.lines, self.color_image, self.width(), self.height(), self.devicePixelRatioF()
+                )
+            painter.drawPixmap(0, 0, self.cache)
 
-        # SPEED: Qt asks us to repaint often (for example when another
-        # window moves across ours). Drawing thousands of characters each
-        # time would be wasteful, so we draw the art once into an off-screen
-        # picture (the "cache") and afterwards just stamp that picture on.
-        if self.cache is None:
-            # Modern Mac screens pack 2 real pixels into each "point" of
-            # size. Drawing at that ratio keeps the text sharp.
-            self.cache = self.render(
-                self.lines, self.color_image, self.width(), self.height(), self.devicePixelRatioF()
-            )
-        painter.drawPixmap(0, 0, self.cache)
+        # While a file is being dragged over the window, draw a green
+        # outline on top of everything to show it can be dropped here.
+        if self.drop_hint:
+            painter.setPen(QPen(QColor("#34c759"), 4))  # 4 is the line's thickness
+            painter.setBrush(Qt.NoBrush)                # outline only, no filling
+            # "adjusted" moves the edges in by 2 so the whole line is inside the area.
+            painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
 
     def export_picture(self):
         """Return the art on screen as a picture for saving or copying."""
@@ -302,6 +315,9 @@ class MainWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AsciiAnything")
+        # Let files be dragged from Finder and dropped anywhere on the window.
+        # (See dragEnterEvent and dropEvent further down.)
+        self.setAcceptDrops(True)
         self.image_name = ""    # the chosen file's name, without ".jpg" etc.
 
         # A still image is one "frame". An animated GIF is many, shown one
@@ -448,6 +464,53 @@ class MainWindow(QWidget):
         )
         if path:  # path is empty if the user pressed Cancel
             self.open_image(path)
+
+    # -- Drag and drop --
+    # Qt calls these three functions by itself as something is dragged
+    # over the window: once when it arrives, once if it leaves again
+    # without being dropped, and once if the mouse button is let go.
+
+    def dropped_file(self, event):
+        """Return the path of the first file being dragged, or "" if none.
+
+        Things other than files can be dragged too (a piece of text, or a
+        picture straight from a web page). Those give "".
+        """
+        # Dragged files arrive as a list of "URLs", which are addresses.
+        # A file on this Mac has an address beginning "file://".
+        for url in event.mimeData().urls():
+            if url.isLocalFile():
+                return url.toLocalFile()  # the address as an ordinary path
+        return ""
+
+    def dragEnterEvent(self, event):
+        # Only say yes to files. Anything else gets the "can't drop that
+        # here" cursor and the other two functions are never called.
+        if self.dropped_file(event):
+            event.acceptProposedAction()
+            self.art_view.show_drop_hint(True)
+
+    def dragLeaveEvent(self, event):
+        self.art_view.show_drop_hint(False)
+
+    def dropEvent(self, event):
+        self.art_view.show_drop_hint(False)
+        path = self.dropped_file(event)
+        if not path:
+            return
+        event.acceptProposedAction()
+
+        # Dropping a file doesn't bring the app to the front the way
+        # clicking on it does, so do that ourselves.
+        self.raise_()
+        self.activateWindow()
+
+        # Finder waits for this function to finish before it ends the drag,
+        # and a big GIF can take a moment to load. So instead of opening the
+        # file right now, ask Qt to do it "0 milliseconds from now", which
+        # means "as soon as you have finished with this drop".
+        # "lambda:" makes a small unnamed function to be called later.
+        QTimer.singleShot(0, lambda: self.open_image(path))
 
     def open_image(self, path):
         """Load the image at `path` and show it as ASCII art."""
